@@ -28,10 +28,7 @@ DEEPGRAM_API_KEY = os.getenv('DEEPGRAM_API_KEY', 'YOUR_DEEPGRAM_API_KEY_HERE')
 
 class MediaStreamHandler(WebSocketApplication):
     def on_open(self):
-        print("=" * 60)
-        print("NEW WEBSOCKET CONNECTION ACCEPTED")
-        print("WebSocket path: /media")
-        print("=" * 60)
+        print("WebSocket connection established")
         self.has_seen_media = False
         self.message_count = 0
         self.deepgram_ws = None
@@ -52,31 +49,34 @@ class MediaStreamHandler(WebSocketApplication):
         
         # Using the event type you can determine what type of message you are receiving
         if data['event'] == "connected":
-            print("Connected Message received: {}".format(message))
+            pass  # Connection established
         if data['event'] == "start":
-            print("Start Message received: {}".format(message))
             self.stream_config = data['start']
             # Connect to Deepgram when stream starts
             self.connect_to_deepgram()
         if data['event'] == "media":
             payload = data['media']['payload']
             chunk = base64.b64decode(payload)
+            track = data['media'].get('track', 'unknown')
             
             if not self.has_seen_media:
-                print("Media message received: {} bytes".format(len(chunk)))
                 self.has_seen_media = True
             
-            # Forward audio to Deepgram
-            if self.deepgram_ws and self.deepgram_ws.sock and self.deepgram_ws.sock.connected:
+            # For conference calls, process only inbound audio
+            # Conference outbound audio often contains echo and is harder to transcribe
+            if track == "inbound" and self.deepgram_ws and self.deepgram_ws.sock and self.deepgram_ws.sock.connected:
                 try:
+                    # Check if chunk has any non-zero bytes (basic audio activity check)
+                    has_audio = any(b != 0 for b in chunk)
+                    if not has_audio:
+                        return
+                    
                     self.deepgram_ws.send(chunk, websocket.ABNF.OPCODE_BINARY)
                 except Exception as e:
-                    print("Error sending to Deepgram: {}".format(e))
+                    print(f"Error sending to Deepgram: {e}")
         if data['event'] == "stop":
-            print("Stop Message received: {}".format(message))
             self.close_deepgram()
         if data['event'] == "closed":
-            print("Closed Message received: {}".format(message))
             self.close_deepgram()
             return
         
@@ -85,11 +85,14 @@ class MediaStreamHandler(WebSocketApplication):
     def connect_to_deepgram(self):
         """Connect to Deepgram WebSocket API"""
         if DEEPGRAM_API_KEY == 'YOUR_DEEPGRAM_API_KEY_HERE':
-            print("WARNING: Deepgram API key not set. Set DEEPGRAM_API_KEY environment variable.")
+            print("ERROR: Deepgram API key not set!")
+            print("Please create a .env file with: DEEPGRAM_API_KEY=your_actual_api_key")
+            print("Or set the environment variable: export DEEPGRAM_API_KEY=your_actual_api_key")
             return
         
         # Build Deepgram WebSocket URL with parameters
         # Twilio sends μ-law audio at 8000Hz mono
+        # Using enhanced model and parameters for better conference audio handling
         deepgram_url = (
             f"wss://api.deepgram.com/v1/listen?"
             f"model=nova-2&"
@@ -98,32 +101,38 @@ class MediaStreamHandler(WebSocketApplication):
             f"sample_rate=8000&"
             f"channels=1&"
             f"interim_results=true&"
-            f"punctuate=true"
+            f"punctuate=true&"
+            f"smart_format=true&"
+            f"diarize=false&"
+            f"multichannel=false&"
+            f"utterance_end_ms=1000&"
+            f"vad_events=true"
         )
         
         def on_deepgram_message(ws, message):
             """Handle messages from Deepgram"""
-            response = json.loads(message)
-            
-            if response.get('type') == 'Results':
-                transcript = response.get('channel', {}).get('alternatives', [{}])[0].get('transcript', '')
-                is_final = response.get('is_final', False)
+            try:
+                response = json.loads(message)
                 
-                if transcript:
-                    status = "[FINAL]" if is_final else "[INTERIM]"
-                    print(f"{status} Transcription: {transcript}")
-            
-            elif response.get('type') == 'Metadata':
-                print(f"Deepgram Metadata: {response.get('request_id')}")
+                if response.get('type') == 'Results':
+                    transcript = response.get('channel', {}).get('alternatives', [{}])[0].get('transcript', '')
+                    is_final = response.get('is_final', False)
+                    
+                    # Only print final transcriptions
+                    if transcript and is_final:
+                        print(f"Transcription: {transcript}")
+                    
+            except json.JSONDecodeError as e:
+                print(f"Error parsing Deepgram message: {e}")
         
         def on_deepgram_error(ws, error):
             print(f"Deepgram WebSocket error: {error}")
         
         def on_deepgram_close(ws, close_status_code, close_msg):
-            print("Deepgram WebSocket connection closed")
+            pass  # Connection closed
         
         def on_deepgram_open(ws):
-            print("Connected to Deepgram WebSocket")
+            pass  # Connected to Deepgram
         
         # Create WebSocket connection to Deepgram
         ws = websocket.WebSocketApp(
@@ -140,7 +149,6 @@ class MediaStreamHandler(WebSocketApplication):
         # Run Deepgram WebSocket in a separate thread
         self.deepgram_thread = threading.Thread(target=ws.run_forever, daemon=True)
         self.deepgram_thread.start()
-        print("Deepgram connection initiated...")
     
     def close_deepgram(self):
         """Close Deepgram WebSocket connection"""
@@ -152,7 +160,6 @@ class MediaStreamHandler(WebSocketApplication):
             self.deepgram_ws = None
     
     def on_close(self, reason):
-        print("Connection closed. Received a total of {} messages".format(self.message_count))
         self.close_deepgram()
 
 # Flask app for HTTP routes
@@ -163,9 +170,10 @@ def index():
     return "WebSocket server is running. Connect to ws://localhost:5001/media for WebSocket connections."
 
 if __name__ == '__main__':
-    print("Starting WebSocket server...")
-    print("Server listening on: http://localhost:" + str(HTTP_SERVER_PORT))
+    print("WebSocket transcription server started")
+    print("Listening on: http://localhost:" + str(HTTP_SERVER_PORT))
     print("WebSocket endpoint: ws://localhost:" + str(HTTP_SERVER_PORT) + "/media")
+    print("Ready for Twilio Media Streams...")
     
     # Create WebSocket server with resource mapping
     WebSocketServer(
