@@ -20,8 +20,8 @@ Twilio Call → TwiML (<Stream>) → Your WebSocket Server → Deepgram API
 ## Prerequisites
 
 - Python 3.x
-- A Twilio account with a phone number
-- A Deepgram account with an API key ([Get one here](https://deepgram.com))
+- Volie application and calling set up locally
+- A Deepgram account with an API key
 - ngrok (for local development to expose your server publicly)
 
 ## Setup
@@ -31,7 +31,7 @@ Twilio Call → TwiML (<Stream>) → Your WebSocket Server → Deepgram API
 ```bash
 python -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
-pip install flask gevent gevent-websocket websocket-client
+pip install -r requirements.txt
 ```
 
 ### 2. Configure Environment Variables
