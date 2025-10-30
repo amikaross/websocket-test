@@ -75,6 +75,7 @@ class MediaStreamHandler(WebSocketApplication):
                 except Exception as e:
                     print(f"Error sending to Deepgram: {e}")
         if data['event'] == "stop":
+            print("Twilio stream stopped")
             self.close_deepgram()
         if data['event'] == "closed":
             self.close_deepgram()
@@ -160,6 +161,7 @@ class MediaStreamHandler(WebSocketApplication):
             self.deepgram_ws = None
     
     def on_close(self, reason):
+        print(f"WebSocket closed: {reason}")
         self.close_deepgram()
 
 # Flask app for HTTP routes
